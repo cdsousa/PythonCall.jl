@@ -1,7 +1,7 @@
 """
 Garbarge collection of Python objects.
 
-See `disable` and `enable`.
+See `enable` and `gc`.
 """
 module GC
 
@@ -16,6 +16,8 @@ const QUEUE = C.PyPtr[]
 
 Enable or disable the PythonCall garbage collector.
 
+Returns `true` or `false` indicating if the GC was previously enabled.
+
 Any Python objects which are finalized while the GC is disabled, or from a thread other than
 1, are not actually freed until either the GC is re-enabled or a Python object is finalized
 on thread 1.
@@ -29,7 +31,7 @@ function enable(on::Bool=true)
     return ans
 end
 
-@deprecate disable() enable(false) export_old=false
+@deprecate disable() enable(false) false
 
 """
     PythonCall.GC.disable()
