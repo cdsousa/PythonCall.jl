@@ -7,6 +7,7 @@ module GC
 
 import ..PythonCall.C
 
+const LOCK = Base.Threads.SpinLock()
 const ENABLED = Ref(true)
 const QUEUE = C.PyPtr[]
 
@@ -37,6 +38,11 @@ Like most PythonCall functions, you must only call this from the main thread.
 """
 function enable()
     ENABLED[] = true
+    gc()
+    return
+end
+
+function _gc()
     if !isempty(QUEUE)
         C.with_gil(false) do
             for ptr in QUEUE
@@ -45,19 +51,45 @@ function enable()
                 end
             end
         end
+        empty!(QUEUE)
     end
-    empty!(QUEUE)
     return
+end
+
+"""
+    PythonCall.GC.gc()
+
+Free any Python objects waiting to be freed.
+
+These are Python objects which were GC'd but not from the main thread, or were GC'd while
+PythonCall's GC is disabled.
+
+You do not normally need to call this, since it will happen automatically when a Python
+object is freed on the main thread or PythonCall's GC is enabled.
+
+Like most PythonCall functions, you must only call this from the main thread.
+"""
+function gc()
+    if Base.Threads.nthreads() > 1
+        @lock LOCK _gc()
+    else
+        _gc()
+    end
 end
 
 function enqueue(ptr::C.PyPtr)
     if ptr != C.PyNULL && C.CTX.is_initialized
-        if ENABLED[]
+        if ENABLED[] && Base.Threads.threadid() == 1
             C.with_gil(false) do
                 C.Py_DecRef(ptr)
             end
+            gc()
         else
-            push!(QUEUE, ptr)
+            if Base.Threads.nthreads() > 1
+                @lock LOCK push!(QUEUE, ptr)
+            else
+                push!(QUEUE, ptr)
+            end
         end
     end
     return
@@ -65,7 +97,7 @@ end
 
 function enqueue_all(ptrs)
     if C.CTX.is_initialized
-        if ENABLED[]
+        if ENABLED[] && Base.Threads.threadid() == 1
             C.with_gil(false) do
                 for ptr in ptrs
                     if ptr != C.PyNULL
@@ -73,8 +105,13 @@ function enqueue_all(ptrs)
                     end
                 end
             end
+            gc()
         else
-            append!(QUEUE, ptrs)
+            if Base.Threads.nthreads() > 1
+                @lock LOCK append!(QUEUE, ptrs)
+            else
+                append!(QUEUE, ptrs)
+            end
         end
     end
     return
